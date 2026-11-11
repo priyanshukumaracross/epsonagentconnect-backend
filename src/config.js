@@ -13,6 +13,18 @@ function required(key) {
 
 const list = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean);
 
+/**
+ * CORS_ORIGINS entry -> exact string, or a RegExp when it contains "*".
+ * "*" matches one part of a host name, e.g. https://epson-*.vercel.app also allows
+ * Vercel preview URLs like https://epson-connect-git-main-yourteam.vercel.app
+ */
+function corsEntry(origin) {
+  const clean = origin.replace(/\/+$/, '');
+  if (!clean.includes('*')) return clean;
+  const pattern = clean.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')).join('[a-z0-9-]*');
+  return new RegExp(`^${pattern}$`, 'i');
+}
+
 function buildIceServers() {
   const servers = [];
   const stun = list(process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302');
@@ -58,7 +70,7 @@ export const config = {
   env: process.env.NODE_ENV || 'development',
   isProd: process.env.NODE_ENV === 'production',
   port: Number(process.env.PORT || 4000),
-  corsOrigins: list(process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174'),
+  corsOrigins: list(process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174').map(corsEntry),
   db: buildDb(),
   jwtSecret: required('JWT_SECRET'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
