@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { query } from '../db/pool.js';
+import { query, sql } from '../db/pool.js';
 import { ah, HttpError } from '../middleware/error.js';
 import { requireAuth, signToken } from '../middleware/auth.js';
 
@@ -23,7 +23,7 @@ router.post('/login', loginLimiter, ah(async (req, res) => {
   if (!user || !(await bcrypt.compare(password, user.password_hash))) throw new HttpError(401, 'Incorrect email or password');
   if (!user.is_active) throw new HttpError(403, 'Your account has been deactivated. Contact your administrator.');
 
-  await query('UPDATE users SET last_login_at = NOW(3) WHERE id = ?', [user.id]);
+  await query(`UPDATE users SET last_login_at = ${sql.now} WHERE id = ?`, [user.id]);
   res.json({ token: signToken(user), user: publicUser(user) });
 }));
 
@@ -37,7 +37,7 @@ router.post('/change-password', requireAuth(), ah(async (req, res) => {
 
   const { rows } = await query('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
   if (!(await bcrypt.compare(currentPassword, rows[0].password_hash))) throw new HttpError(400, 'Current password is incorrect');
-  await query('UPDATE users SET password_hash = ?, updated_at = NOW(3) WHERE id = ?', [await bcrypt.hash(newPassword, 10), req.user.id]);
+  await query(`UPDATE users SET password_hash = ?, updated_at = ${sql.now} WHERE id = ?`, [await bcrypt.hash(newPassword, 10), req.user.id]);
   res.json({ ok: true });
 }));
 

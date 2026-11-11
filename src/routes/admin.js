@@ -3,10 +3,10 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { query } from '../db/pool.js';
+import { arr, inList, query, sql } from '../db/pool.js';
 import { ah, HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
-import { paging, whereBuilder, dateRange, toCsv, uuid, refId, likeTerm } from '../utils/helpers.js';
+import { paging, whereBuilder, dateRange, nextDay, toCsv, uuid, refId, likeTerm } from '../utils/helpers.js';
 import * as presence from '../services/presence.js';
 import * as calls from '../services/calls.js';
 
@@ -14,7 +14,7 @@ const router = Router();
 router.use(requireAuth('admin'));
 
 const CALL_STATUSES = ['queued', 'in_progress', 'completed', 'missed', 'cancelled', 'failed'];
-const n = (expr) => `COALESCE(SUM(${expr}), 0)`; // count rows matching a condition
+const n = (expr) => `COALESCE(SUM(CASE WHEN ${expr} THEN 1 ELSE 0 END), 0)`; // count rows matching a condition
 
 /* =========================== Dashboard =========================== */
 router.get('/stats', ah(async (req, res) => {
@@ -36,7 +36,7 @@ router.get('/stats', ah(async (req, res) => {
               COALESCE(ROUND(AVG(CASE WHEN status = 'completed' THEN duration_seconds END)), 0) AS avg_duration,
               ROUND(AVG(rating), 1) AS avg_rating,
               ${n("outcome = 'purchased'")} AS purchased,
-              ${n("JSON_CONTAINS(customer_requests, '\"callback\"') AND status <> 'completed'")} AS callbacks
+              ${n(`${sql.listHasLiteral('customer_requests', 'callback')} AND status <> 'completed'`)} AS callbacks
          FROM calls WHERE DATE(requested_at) BETWEEN ? AND ?`,
       [lo, hi],
     ),
@@ -46,13 +46,13 @@ router.get('/stats', ah(async (req, res) => {
          FROM leads l WHERE DATE(l.created_at) BETWEEN ? AND ?`,
       [lo, hi],
     ),
-    query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS d"),
+    query(`SELECT ${sql.fmtDay('CURRENT_DATE')} AS d`),
     query(
-      `SELECT DATE_FORMAT(requested_at, '%Y-%m-%d') AS day,
+      `SELECT ${sql.fmtDay('requested_at')} AS day_key,
               ${n("status = 'completed'")} AS completed,
               ${n("status IN ('missed','cancelled','failed')")} AS not_connected
-         FROM calls WHERE requested_at >= CURDATE() - INTERVAL 13 DAY
-     GROUP BY day`,
+         FROM calls WHERE requested_at >= ${sql.daysAgo(13)}
+     GROUP BY day_key`,
     ),
     query(
       `SELECT state, COUNT(*) AS leads FROM leads WHERE DATE(created_at) BETWEEN ? AND ?
@@ -80,7 +80,7 @@ router.get('/stats', ah(async (req, res) => {
   ]);
 
   // Fill the last 14 days (including days without calls)
-  const byDay = new Map(dailyRows.map((r) => [r.day, r]));
+  const byDay = new Map(dailyRows.map((r) => [r.day_key, r]));
   const end = new Date(`${today.d}T00:00:00Z`);
   const daily = Array.from({ length: 14 }, (_, i) => {
     const d = new Date(end);
@@ -104,20 +104,20 @@ router.get('/stats', ah(async (req, res) => {
 function callFilters(q) {
   const w = whereBuilder();
   const statuses = String(q.status || '').split(',').filter((s) => CALL_STATUSES.includes(s));
-  if (statuses.length) w.add('c.status IN (?)', statuses);
+  if (statuses.length) w.add('c.status IN (?)', inList(statuses));
   if (q.mode === 'video' || q.mode === 'voice') w.add('c.mode = ?', q.mode);
   if (uuid.safeParse(q.agentId).success) w.add('c.agent_id = ?', q.agentId);
   if (uuid.safeParse(q.storeId).success) w.add('l.store_id = ?', q.storeId);
   if (q.connected === 'yes') w.add("c.status = 'completed'");
   if (q.connected === 'no') w.add("c.status IN ('missed','cancelled','failed')");
-  if (q.callback === 'yes') w.add("JSON_CONTAINS(c.customer_requests, '\"callback\"')");
+  if (q.callback === 'yes') w.add(sql.listHasLiteral('c.customer_requests', 'callback'));
   const { from, to } = dateRange(q);
   if (from) w.add('c.requested_at >= ?', `${from} 00:00:00`);
-  if (to) w.add('c.requested_at < DATE_ADD(?, INTERVAL 1 DAY)', to);
+  if (to) w.add('c.requested_at < ?', nextDay(to));
   if (q.search) {
     const s = likeTerm(q.search);
     const ref = `${String(q.search).trim().replace(/^EPS-/i, '').toLowerCase().replace(/[\\%_]/g, '')}%`;
-    w.add('(l.name LIKE ? OR l.mobile LIKE ? OR l.city LIKE ? OR c.id LIKE ?)', s, s, s, ref);
+    w.add(`(l.name ${sql.like} ? OR l.mobile ${sql.like} ? OR l.city ${sql.like} ? OR ${sql.idText('c.id')} ${sql.like} ?)`, s, s, s, ref);
   }
   return w;
 }
@@ -125,7 +125,7 @@ function callFilters(q) {
 const CALL_SELECT = `
   SELECT c.id, c.mode, c.language, c.status, c.requested_at, c.accepted_at, c.ended_at, c.duration_seconds,
          c.end_reason, c.rating, c.feedback, c.outcome, c.agent_notes, c.customer_requests,
-         TIMESTAMPDIFF(SECOND, c.requested_at, COALESCE(c.accepted_at, c.ended_at, NOW(3))) AS wait_seconds,
+         ${sql.secondsBetween('c.requested_at', `COALESCE(c.accepted_at, c.ended_at, ${sql.now})`)} AS wait_seconds,
          l.id AS lead_id, l.name AS customer_name, l.mobile, l.city, l.state, l.product, l.interests,
          s.id AS store_id, s.name AS store_name, s.code AS store_code,
          u.id AS agent_id, u.name AS agent_name
@@ -187,10 +187,10 @@ function leadFilters(q) {
   if (q.connected === 'no') w.add(`NOT ${CONNECTED}`);
   const { from, to } = dateRange(q);
   if (from) w.add('l.created_at >= ?', `${from} 00:00:00`);
-  if (to) w.add('l.created_at < DATE_ADD(?, INTERVAL 1 DAY)', to);
+  if (to) w.add('l.created_at < ?', nextDay(to));
   if (q.search) {
     const s = likeTerm(q.search);
-    w.add('(l.name LIKE ? OR l.mobile LIKE ? OR l.city LIKE ?)', s, s, s);
+    w.add(`(l.name ${sql.like} ? OR l.mobile ${sql.like} ? OR l.city ${sql.like} ?)`, s, s, s);
   }
   return w;
 }
@@ -266,7 +266,7 @@ router.get('/users', ah(async (req, res) => {
   const { rows } = await query(
     `SELECT u.id, u.name, u.email, u.role, u.languages, u.is_active, u.last_login_at, u.created_at,
             ${n("c.status = 'completed'")} AS completed_calls,
-            ${n("c.status = 'completed' AND DATE(c.requested_at) = CURDATE()")} AS completed_today,
+            ${n("c.status = 'completed' AND DATE(c.requested_at) = CURRENT_DATE")} AS completed_today,
             ROUND(AVG(c.rating), 1) AS avg_rating
        FROM users u LEFT JOIN calls c ON c.agent_id = u.id
       GROUP BY u.id, u.name, u.email, u.role, u.languages, u.is_active, u.last_login_at, u.created_at
@@ -287,7 +287,7 @@ router.post('/users', ah(async (req, res) => {
   const id = crypto.randomUUID();
   await query(
     'INSERT INTO users (id, name, email, password_hash, role, languages) VALUES (?, ?, LOWER(?), ?, ?, ?)',
-    [id, d.name, d.email, await bcrypt.hash(d.password, 10), d.role, JSON.stringify(d.languages)],
+    [id, d.name, d.email, await bcrypt.hash(d.password, 10), d.role, arr(d.languages)],
   );
   const { rows } = await query(`SELECT ${USER_COLS} FROM users WHERE id = ?`, [id]);
   res.status(201).json({ user: rows[0] });
@@ -310,7 +310,7 @@ router.patch('/users/:id', ah(async (req, res) => {
   const params = [];
   const set = (col, v) => { sets.push(`${col} = ?`); params.push(v); };
   if (d.name !== undefined) set('name', d.name);
-  if (d.languages !== undefined) set('languages', JSON.stringify(d.languages));
+  if (d.languages !== undefined) set('languages', arr(d.languages));
   if (d.isActive !== undefined) set('is_active', d.isActive);
   if (d.role !== undefined) set('role', d.role);
   if (d.password !== undefined) set('password_hash', await bcrypt.hash(d.password, 10));
@@ -318,7 +318,7 @@ router.patch('/users/:id', ah(async (req, res) => {
 
   const { rows: existing } = await query('SELECT id FROM users WHERE id = ?', [id]);
   if (!existing[0]) throw new HttpError(404, 'User not found');
-  await query(`UPDATE users SET ${sets.join(', ')}, updated_at = NOW(3) WHERE id = ?`, [...params, id]);
+  await query(`UPDATE users SET ${sets.join(', ')}, updated_at = ${sql.now} WHERE id = ?`, [...params, id]);
   const { rows } = await query(`SELECT ${USER_COLS} FROM users WHERE id = ?`, [id]);
   if (d.isActive === false || d.role) await calls.disconnectUser(id);
   res.json({ user: rows[0] });
@@ -367,7 +367,7 @@ router.patch('/stores/:id', ah(async (req, res) => {
   if (!sets.length) throw new HttpError(400, 'Nothing to update');
   const { rows: existing } = await query('SELECT id FROM stores WHERE id = ?', [id]);
   if (!existing[0]) throw new HttpError(404, 'Store not found');
-  await query(`UPDATE stores SET ${sets.join(', ')}, updated_at = NOW(3) WHERE id = ?`, [...params, id]);
+  await query(`UPDATE stores SET ${sets.join(', ')}, updated_at = ${sql.now} WHERE id = ?`, [...params, id]);
   const { rows } = await query('SELECT * FROM stores WHERE id = ?', [id]);
   res.json({ store: rows[0] });
 }));

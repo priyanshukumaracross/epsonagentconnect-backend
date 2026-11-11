@@ -1,15 +1,14 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { pool, query } from './pool.js';
+import { arr, pool, query, sql } from './pool.js';
 
 const env = process.env;
 
 async function upsertUser({ name, email, password, role, languages }) {
   const hash = await bcrypt.hash(password, 10);
   const { affectedRows } = await query(
-    `INSERT IGNORE INTO users (id, name, email, password_hash, role, languages)
-     VALUES (?, ?, LOWER(?), ?, ?, ?)`,
-    [crypto.randomUUID(), name, email, hash, role, JSON.stringify(languages)],
+    sql.insertIgnore('users (id, name, email, password_hash, role, languages)', '(?, ?, LOWER(?), ?, ?, ?)'),
+    [crypto.randomUUID(), name, email, hash, role, arr(languages)],
   );
   console.log(affectedRows ? `  + ${role.padEnd(5)} ${email} / ${password}` : `  = ${role.padEnd(5)} ${email} (already exists)`);
 }
@@ -37,7 +36,7 @@ try {
     ];
     for (const s of stores) {
       await query(
-        'INSERT IGNORE INTO stores (id, code, name, city, state, default_product) VALUES (?, ?, ?, ?, ?, ?)',
+        sql.insertIgnore('stores (id, code, name, city, state, default_product)', '(?, ?, ?, ?, ?, ?)'),
         [crypto.randomUUID(), ...s],
       );
       console.log(`  + store ${s[0]}  ${s[1]}`);

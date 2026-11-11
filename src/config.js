@@ -24,24 +24,35 @@ function buildIceServers() {
   return servers;
 }
 
-/** MySQL connection: either DATABASE_URL=mysql://user:pass@host:3306/db or the separate DB_* variables. */
+/**
+ * Database selection
+ *   postgres - local development (Neon):  DATABASE_URL=postgresql://...
+ *   mysql    - deployment (cPanel):       DB_HOST/DB_NAME/DB_USER/DB_PASSWORD  or  DATABASE_URL=mysql://...
+ * DB_CLIENT=postgres|mysql forces one; otherwise it is detected from DATABASE_URL (no URL = mysql).
+ */
 function buildDb() {
-  const common = {
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
-  };
-  if (process.env.DATABASE_URL) return { uri: process.env.DATABASE_URL, ...common };
+  const url = process.env.DATABASE_URL || '';
+  const client = (process.env.DB_CLIENT || (/^postgres(ql)?:\/\//i.test(url) ? 'postgres' : 'mysql')).toLowerCase();
+  if (!['postgres', 'mysql'].includes(client)) throw new Error('DB_CLIENT must be "postgres" or "mysql"');
+  const ssl = process.env.DB_SSL === 'true' || process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined;
+
+  if (client === 'postgres') {
+    return { client, url: required('DATABASE_URL'), ssl, timezone: process.env.DB_TIMEZONE || 'Asia/Kolkata' };
+  }
+  const tzOffset = process.env.DB_TIMEZONE_OFFSET || '+05:30';
+  if (!/^[+-]\d{2}:\d{2}$/.test(tzOffset)) throw new Error('DB_TIMEZONE_OFFSET must look like +05:30');
+  if (url) return { client, uri: url, ssl, tzOffset };
   return {
+    client,
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || 3306),
     user: required('DB_USER'),
     password: process.env.DB_PASSWORD || '',
     database: required('DB_NAME'),
-    ...common,
+    ssl,
+    tzOffset,
   };
 }
-
-const tzOffset = process.env.DB_TIMEZONE_OFFSET || '+05:30';
-if (!/^[+-]\d{2}:\d{2}$/.test(tzOffset)) throw new Error('DB_TIMEZONE_OFFSET must look like +05:30');
 
 export const config = {
   env: process.env.NODE_ENV || 'development',
@@ -49,8 +60,6 @@ export const config = {
   port: Number(process.env.PORT || 4000),
   corsOrigins: list(process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:5174'),
   db: buildDb(),
-  // All timestamps are stored and reported in this offset (default: India Standard Time)
-  dbTimezoneOffset: tzOffset,
   jwtSecret: required('JWT_SECRET'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
   ringTimeoutSec: Number(process.env.CALL_RING_TIMEOUT_SEC || 120),

@@ -21,7 +21,8 @@ export function errorHandler(err, req, res, next) {
     return res.status(400).json({ error: details[0]?.message || 'Invalid input', details });
   }
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
-  if (err?.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A record with this value already exists' });
+  if (err?.code === 'ER_DUP_ENTRY' || err?.code === '23505') return res.status(409).json({ error: 'A record with this value already exists' });
+  if (err?.code === '22P02') return res.status(400).json({ error: 'Invalid identifier' });
   if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON body' });
 
   console.error('[error]', err);

@@ -3,7 +3,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { query } from '../db/pool.js';
+import { arr, query, sql } from '../db/pool.js';
 import { config } from '../config.js';
 import { ah, HttpError } from '../middleware/error.js';
 import { uuid } from '../utils/helpers.js';
@@ -19,7 +19,7 @@ const REQUESTS = ['brochure', 'store_assist', 'callback'];
 
 router.get('/stores/:code', ah(async (req, res) => {
   const { rows } = await query(
-    'SELECT code, name, city, state, default_product FROM stores WHERE code = ? AND is_active = 1',
+    'SELECT code, name, city, state, default_product FROM stores WHERE code = ? AND is_active = TRUE',
     [String(req.params.code).slice(0, 40)],
   );
   if (!rows[0]) throw new HttpError(404, 'Store not found');
@@ -54,7 +54,7 @@ router.post('/leads', writeLimiter, ah(async (req, res) => {
   await query(
     `INSERT INTO leads (id, name, mobile, state, city, interests, store_id, product, consent, user_agent)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, d.name, d.mobile, d.state, d.city, JSON.stringify(d.interests), storeId, d.product || null, d.consent, (req.get('user-agent') || '').slice(0, 300)],
+    [id, d.name, d.mobile, d.state, d.city, arr(d.interests), storeId, d.product || null, d.consent, (req.get('user-agent') || '').slice(0, 300)],
   );
   const { rows } = await query('SELECT id, name, mobile, state, city, interests, product, created_at FROM leads WHERE id = ?', [id]);
   calls.notifyAdmins();
@@ -78,8 +78,8 @@ router.post('/calls', writeLimiter, ah(async (req, res) => {
   const id = crypto.randomUUID();
   const token = crypto.randomBytes(24).toString('hex');
   await query(
-    "INSERT INTO calls (id, lead_id, mode, language, customer_token, customer_requests) VALUES (?, ?, ?, ?, ?, '[]')",
-    [id, d.leadId, d.mode, d.language, token],
+    'INSERT INTO calls (id, lead_id, mode, language, customer_token, customer_requests) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, d.leadId, d.mode, d.language, token, arr([])],
   );
   const { rows } = await query('SELECT id, mode, language, status, requested_at FROM calls WHERE id = ?', [id]);
   calls.onCallCreated(id);
@@ -108,7 +108,7 @@ router.post('/calls/:id/feedback', writeLimiter, ah(async (req, res) => {
   }).parse(req.body);
   const call = await customerCall(req.params.id, d.token);
   if (call.status !== 'completed') throw new HttpError(400, 'Feedback can be given after the call');
-  await query('UPDATE calls SET rating = ?, feedback = COALESCE(?, feedback), updated_at = NOW(3) WHERE id = ?', [d.rating, d.comment || null, call.id]);
+  await query(`UPDATE calls SET rating = ?, feedback = COALESCE(?, feedback), updated_at = ${sql.now} WHERE id = ?`, [d.rating, d.comment || null, call.id]);
   calls.notifyAdmins();
   res.json({ ok: true });
 }));
@@ -117,8 +117,8 @@ router.post('/calls/:id/requests', writeLimiter, ah(async (req, res) => {
   const d = z.object({ token: z.string(), type: z.enum(REQUESTS) }).parse(req.body);
   const call = await customerCall(req.params.id, d.token);
   await query(
-    `UPDATE calls SET customer_requests = JSON_ARRAY_APPEND(customer_requests, '$', ?), updated_at = NOW(3)
-      WHERE id = ? AND NOT JSON_CONTAINS(customer_requests, JSON_QUOTE(?))`,
+    `UPDATE calls SET customer_requests = ${sql.listAppend('customer_requests')}, updated_at = ${sql.now}
+      WHERE id = ? AND NOT ${sql.listHas('customer_requests')}`,
     [d.type, call.id, d.type],
   );
   calls.notifyAdmins();

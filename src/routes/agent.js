@@ -1,7 +1,7 @@
 /** Agent (product expert) API: own call history, stats and post-call notes. */
 import { Router } from 'express';
 import { z } from 'zod';
-import { query } from '../db/pool.js';
+import { query, sql } from '../db/pool.js';
 import { ah, HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { paging, uuid, likeTerm } from '../utils/helpers.js';
@@ -10,12 +10,12 @@ import * as calls from '../services/calls.js';
 const router = Router();
 router.use(requireAuth('agent'));
 
-const n = (expr) => `COALESCE(SUM(${expr}), 0)`;
+const n = (expr) => `COALESCE(SUM(CASE WHEN ${expr} THEN 1 ELSE 0 END), 0)`;
 
 router.get('/stats', ah(async (req, res) => {
   const { rows } = await query(
-    `SELECT ${n("status = 'completed' AND DATE(requested_at) = CURDATE()")} AS completed_today,
-            COALESCE(SUM(CASE WHEN DATE(requested_at) = CURDATE() THEN duration_seconds END), 0) AS talk_time_today,
+    `SELECT ${n("status = 'completed' AND DATE(requested_at) = CURRENT_DATE")} AS completed_today,
+            COALESCE(SUM(CASE WHEN DATE(requested_at) = CURRENT_DATE THEN duration_seconds END), 0) AS talk_time_today,
             ${n("status = 'completed'")} AS completed_total,
             ROUND(AVG(rating), 1) AS avg_rating,
             ${n("status = 'completed' AND outcome IS NULL")} AS pending_notes
@@ -32,7 +32,7 @@ router.get('/calls', ah(async (req, res) => {
   if (req.query.search) {
     const s = likeTerm(req.query.search);
     params.push(s, s, s);
-    extra = 'AND (l.name LIKE ? OR l.mobile LIKE ? OR l.city LIKE ?)';
+    extra = `AND (l.name ${sql.like} ? OR l.mobile ${sql.like} ? OR l.city ${sql.like} ?)`;
   }
   if (req.query.pending === 'yes') extra += " AND c.outcome IS NULL AND c.status = 'completed'";
   const [{ rows }, { rows: [count] }] = await Promise.all([
@@ -57,7 +57,7 @@ router.patch('/calls/:id/notes', ah(async (req, res) => {
     notes: z.string().trim().max(2000).optional().default(''),
   }).parse(req.body);
   const { affectedRows } = await query(
-    'UPDATE calls SET outcome = ?, agent_notes = NULLIF(?, \'\'), updated_at = NOW(3) WHERE id = ? AND agent_id = ?',
+    `UPDATE calls SET outcome = ?, agent_notes = NULLIF(?, ''), updated_at = ${sql.now} WHERE id = ? AND agent_id = ?`,
     [d.outcome, d.notes, id, req.user.id],
   );
   if (!affectedRows) throw new HttpError(404, 'Call not found');

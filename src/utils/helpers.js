@@ -47,3 +47,10 @@ export function toCsv(rows, columns) {
 }
 
 export const refId = (id) => `EPS-${String(id).slice(0, 8).toUpperCase()}`;
+
+/** 'YYYY-MM-DD' -> the following day, for exclusive upper bounds (`< nextDay(to)`). */
+export function nextDay(day) {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
