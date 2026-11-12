@@ -20,8 +20,9 @@ export function createApp() {
   app.use(express.json({ limit: '100kb' }));
   if (!config.isProd) app.use(morgan('dev'));
 
+  // Lightweight by default (Render health checks shouldn't keep Neon awake); ?db=1 also checks the database.
   app.get('/api/health', ah(async (req, res) => {
-    await query('SELECT 1');
+    if (req.query.db) await query('SELECT 1');
     res.json({ ok: true, time: new Date().toISOString() });
   }));
 

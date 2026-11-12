@@ -51,8 +51,9 @@ export function initSocket(httpServer) {
       }
       next(new Error('UNAUTHORIZED'));
     } catch (err) {
-      console.error('[socket auth]', err);
-      next(new Error('UNAUTHORIZED'));
+      // Database hiccup (e.g. Neon waking up): not an auth failure - clients retry on SERVER_ERROR
+      console.error('[socket auth]', err.message);
+      next(new Error('SERVER_ERROR'));
     }
   });
 

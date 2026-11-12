@@ -1,0 +1,47 @@
+# Render Blueprint - Epson Expert Connect API (free web service + Neon PostgreSQL)
+# Render dashboard -> New -> Blueprint -> select this repository.
+# Values marked `sync: false` are asked for when the Blueprint is created.
+services:
+  - type: web
+    name: epson-connect-api
+    runtime: node
+    plan: free
+    # Same region as the Neon database (AWS us-east-2 = Render "ohio") keeps queries fast
+    region: ohio
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      # Neon -> Dashboard -> Connect -> connection string (postgresql://...sslmode=require)
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      # Your two Vercel URLs, comma-separated, e.g. https://epson-connect.vercel.app,https://epson-connect-admin.vercel.app
+      - key: CORS_ORIGINS
+        sync: false
+      # First admin login, created automatically on first start
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+      - key: SEED_ADMIN_NAME
+        value: Epson Admin
+      - key: DB_TIMEZONE
+        value: Asia/Kolkata
+      - key: CALL_RING_TIMEOUT_SEC
+        value: "120"
+      - key: STUN_URLS
+        value: stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
+      # TURN relay for calls on mobile networks (recommended)
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false

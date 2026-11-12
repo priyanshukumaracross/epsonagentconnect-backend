@@ -3,7 +3,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { arr, query, sql } from '../db/pool.js';
+import { arr, query } from '../db/pool.js';
 import { config } from '../config.js';
 import { ah, HttpError } from '../middleware/error.js';
 import { uuid } from '../utils/helpers.js';
@@ -19,7 +19,7 @@ const REQUESTS = ['brochure', 'store_assist', 'callback'];
 
 router.get('/stores/:code', ah(async (req, res) => {
   const { rows } = await query(
-    'SELECT code, name, city, state, default_product FROM stores WHERE code = ? AND is_active = TRUE',
+    'SELECT code, name, city, state, default_product FROM stores WHERE code = ? AND is_active',
     [String(req.params.code).slice(0, 40)],
   );
   if (!rows[0]) throw new HttpError(404, 'Store not found');
@@ -108,7 +108,7 @@ router.post('/calls/:id/feedback', writeLimiter, ah(async (req, res) => {
   }).parse(req.body);
   const call = await customerCall(req.params.id, d.token);
   if (call.status !== 'completed') throw new HttpError(400, 'Feedback can be given after the call');
-  await query(`UPDATE calls SET rating = ?, feedback = COALESCE(?, feedback), updated_at = ${sql.now} WHERE id = ?`, [d.rating, d.comment || null, call.id]);
+  await query(`UPDATE calls SET rating = ?, feedback = COALESCE(?, feedback), updated_at = now() WHERE id = ?`, [d.rating, d.comment || null, call.id]);
   calls.notifyAdmins();
   res.json({ ok: true });
 }));
@@ -117,8 +117,8 @@ router.post('/calls/:id/requests', writeLimiter, ah(async (req, res) => {
   const d = z.object({ token: z.string(), type: z.enum(REQUESTS) }).parse(req.body);
   const call = await customerCall(req.params.id, d.token);
   await query(
-    `UPDATE calls SET customer_requests = ${sql.listAppend('customer_requests')}, updated_at = ${sql.now}
-      WHERE id = ? AND NOT ${sql.listHas('customer_requests')}`,
+    `UPDATE calls SET customer_requests = array_append(customer_requests, ?), updated_at = now()
+      WHERE id = ? AND NOT (? = ANY(customer_requests))`,
     [d.type, call.id, d.type],
   );
   calls.notifyAdmins();

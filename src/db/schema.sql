@@ -1,5 +1,4 @@
--- Epson Expert Connect - PostgreSQL schema (local development on Neon). Idempotent: safe to re-run.
--- Production uses MySQL: see schema.mysql.sql (same tables and columns).
+-- Epson Expert Connect - PostgreSQL schema (Neon). Idempotent: safe to re-run; applied automatically on start-up.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Staff: admins and agents (product experts)
@@ -47,7 +46,13 @@ CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_leads_mobile     ON leads (mobile);
 CREATE INDEX IF NOT EXISTS idx_leads_store      ON leads (store_id);
 
--- Every call attempt from a lead (statuses: see schema.mysql.sql)
+-- Every call attempt from a lead
+--   queued      -> waiting for an agent
+--   in_progress -> agent accepted, talking
+--   completed   -> call happened (agent connected), then ended
+--   missed      -> nobody accepted within CALL_RING_TIMEOUT_SEC
+--   cancelled   -> customer left before an agent picked up
+--   failed      -> technical failure (e.g. server restart while queued)
 CREATE TABLE IF NOT EXISTS calls (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_id            UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,

@@ -36,26 +36,26 @@ router.get('/stats', ah(async (req, res) => {
               COALESCE(ROUND(AVG(CASE WHEN status = 'completed' THEN duration_seconds END)), 0) AS avg_duration,
               ROUND(AVG(rating), 1) AS avg_rating,
               ${n("outcome = 'purchased'")} AS purchased,
-              ${n(`${sql.listHasLiteral('customer_requests', 'callback')} AND status <> 'completed'`)} AS callbacks
-         FROM calls WHERE DATE(requested_at) BETWEEN ? AND ?`,
+              ${n(`'callback' = ANY(customer_requests) AND status <> 'completed'`)} AS callbacks
+         FROM calls WHERE ${sql.day('requested_at')} BETWEEN CAST(? AS date) AND CAST(? AS date)`,
       [lo, hi],
     ),
     query(
       `SELECT COUNT(*) AS leads,
               ${n("EXISTS (SELECT 1 FROM calls c WHERE c.lead_id = l.id AND c.status = 'completed')")} AS connected_leads
-         FROM leads l WHERE DATE(l.created_at) BETWEEN ? AND ?`,
+         FROM leads l WHERE ${sql.day('l.created_at')} BETWEEN CAST(? AS date) AND CAST(? AS date)`,
       [lo, hi],
     ),
-    query(`SELECT ${sql.fmtDay('CURRENT_DATE')} AS d`),
+    query(`SELECT ${sql.fmtDay(sql.today)} AS d`),
     query(
-      `SELECT ${sql.fmtDay('requested_at')} AS day_key,
+      `SELECT ${sql.fmtDay(sql.local('requested_at'))} AS day_key,
               ${n("status = 'completed'")} AS completed,
               ${n("status IN ('missed','cancelled','failed')")} AS not_connected
-         FROM calls WHERE requested_at >= ${sql.daysAgo(13)}
+         FROM calls WHERE requested_at >= ${sql.daysAgoStart(13)}
      GROUP BY day_key`,
     ),
     query(
-      `SELECT state, COUNT(*) AS leads FROM leads WHERE DATE(created_at) BETWEEN ? AND ?
+      `SELECT state, COUNT(*) AS leads FROM leads WHERE ${sql.day('created_at')} BETWEEN CAST(? AS date) AND CAST(? AS date)
         GROUP BY state ORDER BY leads DESC LIMIT 6`,
       [lo, hi],
     ),
@@ -66,14 +66,14 @@ router.get('/stats', ah(async (req, res) => {
               ROUND(AVG(c.rating), 1) AS avg_rating,
               ${n("c.outcome = 'purchased'")} AS purchased
          FROM users u
-    LEFT JOIN calls c ON c.agent_id = u.id AND DATE(c.requested_at) BETWEEN ? AND ?
+    LEFT JOIN calls c ON c.agent_id = u.id AND ${sql.day('c.requested_at')} BETWEEN CAST(? AS date) AND CAST(? AS date)
         WHERE u.role = 'agent'
      GROUP BY u.id, u.name ORDER BY completed DESC, u.name LIMIT 10`,
       [lo, hi],
     ),
     query(
       `SELECT s.id, s.name, s.code, COUNT(l.id) AS leads
-         FROM stores s LEFT JOIN leads l ON l.store_id = s.id AND DATE(l.created_at) BETWEEN ? AND ?
+         FROM stores s LEFT JOIN leads l ON l.store_id = s.id AND ${sql.day('l.created_at')} BETWEEN CAST(? AS date) AND CAST(? AS date)
      GROUP BY s.id, s.name, s.code ORDER BY leads DESC LIMIT 6`,
       [lo, hi],
     ),
@@ -110,14 +110,14 @@ function callFilters(q) {
   if (uuid.safeParse(q.storeId).success) w.add('l.store_id = ?', q.storeId);
   if (q.connected === 'yes') w.add("c.status = 'completed'");
   if (q.connected === 'no') w.add("c.status IN ('missed','cancelled','failed')");
-  if (q.callback === 'yes') w.add(sql.listHasLiteral('c.customer_requests', 'callback'));
+  if (q.callback === 'yes') w.add("'callback' = ANY(c.customer_requests)");
   const { from, to } = dateRange(q);
-  if (from) w.add('c.requested_at >= ?', `${from} 00:00:00`);
-  if (to) w.add('c.requested_at < ?', nextDay(to));
+  if (from) w.add(`c.requested_at >= ${sql.localParam}`, from);
+  if (to) w.add(`c.requested_at < ${sql.localParam}`, nextDay(to));
   if (q.search) {
     const s = likeTerm(q.search);
     const ref = `${String(q.search).trim().replace(/^EPS-/i, '').toLowerCase().replace(/[\\%_]/g, '')}%`;
-    w.add(`(l.name ${sql.like} ? OR l.mobile ${sql.like} ? OR l.city ${sql.like} ? OR ${sql.idText('c.id')} ${sql.like} ?)`, s, s, s, ref);
+    w.add(`(l.name ILIKE ? OR l.mobile ILIKE ? OR l.city ILIKE ? OR CAST(c.id AS TEXT) ILIKE ?)`, s, s, s, ref);
   }
   return w;
 }
@@ -125,7 +125,7 @@ function callFilters(q) {
 const CALL_SELECT = `
   SELECT c.id, c.mode, c.language, c.status, c.requested_at, c.accepted_at, c.ended_at, c.duration_seconds,
          c.end_reason, c.rating, c.feedback, c.outcome, c.agent_notes, c.customer_requests,
-         ${sql.secondsBetween('c.requested_at', `COALESCE(c.accepted_at, c.ended_at, ${sql.now})`)} AS wait_seconds,
+         ${sql.secondsBetween('c.requested_at', `COALESCE(c.accepted_at, c.ended_at, now())`)} AS wait_seconds,
          l.id AS lead_id, l.name AS customer_name, l.mobile, l.city, l.state, l.product, l.interests,
          s.id AS store_id, s.name AS store_name, s.code AS store_code,
          u.id AS agent_id, u.name AS agent_name
@@ -186,11 +186,11 @@ function leadFilters(q) {
   if (q.connected === 'yes') w.add(CONNECTED);
   if (q.connected === 'no') w.add(`NOT ${CONNECTED}`);
   const { from, to } = dateRange(q);
-  if (from) w.add('l.created_at >= ?', `${from} 00:00:00`);
-  if (to) w.add('l.created_at < ?', nextDay(to));
+  if (from) w.add(`l.created_at >= ${sql.localParam}`, from);
+  if (to) w.add(`l.created_at < ${sql.localParam}`, nextDay(to));
   if (q.search) {
     const s = likeTerm(q.search);
-    w.add(`(l.name ${sql.like} ? OR l.mobile ${sql.like} ? OR l.city ${sql.like} ?)`, s, s, s);
+    w.add(`(l.name ILIKE ? OR l.mobile ILIKE ? OR l.city ILIKE ?)`, s, s, s);
   }
   return w;
 }
@@ -266,7 +266,7 @@ router.get('/users', ah(async (req, res) => {
   const { rows } = await query(
     `SELECT u.id, u.name, u.email, u.role, u.languages, u.is_active, u.last_login_at, u.created_at,
             ${n("c.status = 'completed'")} AS completed_calls,
-            ${n("c.status = 'completed' AND DATE(c.requested_at) = CURRENT_DATE")} AS completed_today,
+            ${n(`c.status = 'completed' AND ${sql.day('c.requested_at')} = ${sql.today}`)} AS completed_today,
             ROUND(AVG(c.rating), 1) AS avg_rating
        FROM users u LEFT JOIN calls c ON c.agent_id = u.id
       GROUP BY u.id, u.name, u.email, u.role, u.languages, u.is_active, u.last_login_at, u.created_at
@@ -318,7 +318,7 @@ router.patch('/users/:id', ah(async (req, res) => {
 
   const { rows: existing } = await query('SELECT id FROM users WHERE id = ?', [id]);
   if (!existing[0]) throw new HttpError(404, 'User not found');
-  await query(`UPDATE users SET ${sets.join(', ')}, updated_at = ${sql.now} WHERE id = ?`, [...params, id]);
+  await query(`UPDATE users SET ${sets.join(', ')}, updated_at = now() WHERE id = ?`, [...params, id]);
   const { rows } = await query(`SELECT ${USER_COLS} FROM users WHERE id = ?`, [id]);
   if (d.isActive === false || d.role) await calls.disconnectUser(id);
   res.json({ user: rows[0] });
@@ -367,7 +367,7 @@ router.patch('/stores/:id', ah(async (req, res) => {
   if (!sets.length) throw new HttpError(400, 'Nothing to update');
   const { rows: existing } = await query('SELECT id FROM stores WHERE id = ?', [id]);
   if (!existing[0]) throw new HttpError(404, 'Store not found');
-  await query(`UPDATE stores SET ${sets.join(', ')}, updated_at = ${sql.now} WHERE id = ?`, [...params, id]);
+  await query(`UPDATE stores SET ${sets.join(', ')}, updated_at = now() WHERE id = ?`, [...params, id]);
   const { rows } = await query('SELECT * FROM stores WHERE id = ?', [id]);
   res.json({ store: rows[0] });
 }));

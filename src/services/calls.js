@@ -69,7 +69,7 @@ export function onCallCreated(callId) {
 export async function markMissed(callId) {
   ringTimers.delete(callId);
   const { affectedRows } = await query(
-    `UPDATE calls SET status = 'missed', ended_at = ${sql.now}, end_reason = 'no_agent_answered', updated_at = ${sql.now}
+    `UPDATE calls SET status = 'missed', ended_at = now(), end_reason = 'no_agent_answered', updated_at = now()
       WHERE id = ? AND status = 'queued'`,
     [callId],
   );
@@ -83,7 +83,7 @@ export async function markMissed(callId) {
 /** Atomically assign a queued call to an agent. Returns call + lead details, or null if it was taken. */
 export async function acceptCall(callId, agent) {
   const { affectedRows } = await query(
-    `UPDATE calls SET status = 'in_progress', agent_id = ?, accepted_at = ${sql.now}, updated_at = ${sql.now}
+    `UPDATE calls SET status = 'in_progress', agent_id = ?, accepted_at = now(), updated_at = now()
       WHERE id = ? AND status = 'queued'`,
     [agent.id, callId],
   );
@@ -119,18 +119,17 @@ export const readyInfo = (callId) => readyCalls.get(callId);
 
 /**
  * End a call from any state. queued -> cancelled, in_progress -> completed. Idempotent.
- * (MySQL evaluates SET left-to-right, so duration/ended_at are computed before status changes.)
  */
 export async function endCall(callId, reason) {
   if (!callId) return null;
   const { affectedRows } = await query(
     `UPDATE calls
         SET duration_seconds = CASE WHEN accepted_at IS NOT NULL
-                                    THEN GREATEST(0, ${sql.secondsBetween('accepted_at', sql.now)}) END,
-            ended_at = ${sql.now},
+                                    THEN GREATEST(0, ${sql.secondsBetween('accepted_at', 'now()')}) END,
+            ended_at = now(),
             status = CASE WHEN status = 'in_progress' THEN 'completed' ELSE 'cancelled' END,
             end_reason = ?,
-            updated_at = ${sql.now}
+            updated_at = now()
       WHERE id = ? AND status IN ('queued', 'in_progress')`,
     [reason, callId],
   );
@@ -159,11 +158,11 @@ export async function endCall(callId, reason) {
 /** On boot, close calls left open by a previous process (their sockets are gone). */
 export async function recoverStaleCalls() {
   const { affectedRows: q } = await query(
-    `UPDATE calls SET status = 'failed', ended_at = ${sql.now}, end_reason = 'server_restart', updated_at = ${sql.now}
+    `UPDATE calls SET status = 'failed', ended_at = now(), end_reason = 'server_restart', updated_at = now()
       WHERE status = 'queued'`,
   );
   const { affectedRows: p } = await query(
-    `UPDATE calls SET status = 'completed', ended_at = COALESCE(ended_at, ${sql.now}), end_reason = 'server_restart', updated_at = ${sql.now}
+    `UPDATE calls SET status = 'completed', ended_at = COALESCE(ended_at, now()), end_reason = 'server_restart', updated_at = now()
       WHERE status = 'in_progress'`,
   );
   if (q || p) console.log(`[calls] recovered ${q} queued and ${p} in-progress calls after restart`);

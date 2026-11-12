@@ -14,8 +14,8 @@ const n = (expr) => `COALESCE(SUM(CASE WHEN ${expr} THEN 1 ELSE 0 END), 0)`;
 
 router.get('/stats', ah(async (req, res) => {
   const { rows } = await query(
-    `SELECT ${n("status = 'completed' AND DATE(requested_at) = CURRENT_DATE")} AS completed_today,
-            COALESCE(SUM(CASE WHEN DATE(requested_at) = CURRENT_DATE THEN duration_seconds END), 0) AS talk_time_today,
+    `SELECT ${n(`status = 'completed' AND ${sql.day('requested_at')} = ${sql.today}`)} AS completed_today,
+            COALESCE(SUM(CASE WHEN ${sql.day('requested_at')} = ${sql.today} THEN duration_seconds END), 0) AS talk_time_today,
             ${n("status = 'completed'")} AS completed_total,
             ROUND(AVG(rating), 1) AS avg_rating,
             ${n("status = 'completed' AND outcome IS NULL")} AS pending_notes
@@ -32,7 +32,7 @@ router.get('/calls', ah(async (req, res) => {
   if (req.query.search) {
     const s = likeTerm(req.query.search);
     params.push(s, s, s);
-    extra = `AND (l.name ${sql.like} ? OR l.mobile ${sql.like} ? OR l.city ${sql.like} ?)`;
+    extra = `AND (l.name ILIKE ? OR l.mobile ILIKE ? OR l.city ILIKE ?)`;
   }
   if (req.query.pending === 'yes') extra += " AND c.outcome IS NULL AND c.status = 'completed'";
   const [{ rows }, { rows: [count] }] = await Promise.all([
@@ -57,7 +57,7 @@ router.patch('/calls/:id/notes', ah(async (req, res) => {
     notes: z.string().trim().max(2000).optional().default(''),
   }).parse(req.body);
   const { affectedRows } = await query(
-    `UPDATE calls SET outcome = ?, agent_notes = NULLIF(?, ''), updated_at = ${sql.now} WHERE id = ? AND agent_id = ?`,
+    `UPDATE calls SET outcome = ?, agent_notes = NULLIF(?, ''), updated_at = now() WHERE id = ? AND agent_id = ?`,
     [d.outcome, d.notes, id, req.user.id],
   );
   if (!affectedRows) throw new HttpError(404, 'Call not found');

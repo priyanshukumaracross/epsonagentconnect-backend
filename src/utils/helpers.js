@@ -9,7 +9,7 @@ export function paging(q, defLimit = 25) {
   return { limit, page, offset: (page - 1) * limit };
 }
 
-/** Tiny WHERE-clause builder using MySQL `?` placeholders: w.add('x = ?', value). */
+/** Tiny WHERE-clause builder using `?` placeholders: w.add('x = ?', value). */
 export function whereBuilder() {
   const parts = [];
   const params = [];
