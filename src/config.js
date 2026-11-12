@@ -25,16 +25,34 @@ function corsEntry(origin) {
   return new RegExp(`^${pattern}$`, 'i');
 }
 
+/**
+ * "free.expressturn.com:3478" -> "turn:free.expressturn.com:3478" (+ a TCP variant when no transport is given).
+ * Browsers reject the whole call setup if any URL lacks its stun:/turn: scheme.
+ */
+function iceUrls(value, scheme) {
+  return list(value).flatMap((u) => {
+    if (/^(stun|stuns|turn|turns):/i.test(u)) return [u];
+    const bare = u.replace(/^[a-z]+:\/\//i, '');
+    return scheme === 'turn' && !/transport=/i.test(bare) ? [`turn:${bare}`, `turn:${bare}?transport=tcp`] : [`${scheme}:${bare}`];
+  });
+}
+
 /** STUN/TURN settings; src/services/ice.js turns these into the list browsers use. */
 function buildTurn() {
   const keyId = (process.env.CLOUDFLARE_TURN_KEY_ID || '').trim();
   const apiToken = (process.env.CLOUDFLARE_TURN_API_TOKEN || '').trim();
   if (!!keyId !== !!apiToken) throw new Error('Set both CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN (or neither)');
-  const turnUrls = list(process.env.TURN_URLS);
+  const turnUrls = iceUrls(process.env.TURN_URLS, 'turn');
+  // Metered: "epsonconnect" or "epsonconnect.metered.live"
+  const meteredApp = (process.env.METERED_TURN_APP || '').trim().replace(/^https?:\/\//, '').replace(/\.metered\.live\/?$/, '');
+  const meteredKey = (process.env.METERED_TURN_API_KEY || '').trim();
+  if (!!meteredApp !== !!meteredKey) throw new Error('Set both METERED_TURN_APP and METERED_TURN_API_KEY (or neither)');
+  if (meteredApp && !/^[a-z0-9-]+$/i.test(meteredApp)) throw new Error('METERED_TURN_APP must be your Metered app name, e.g. epsonconnect');
   return {
-    stunUrls: list(process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302'),
+    stunUrls: iceUrls(process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302', 'stun'),
     cloudflare: keyId ? { keyId, apiToken } : null,
-    static: turnUrls.length ? { urls: turnUrls, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL } : null,
+    metered: meteredApp ? { app: meteredApp, apiKey: meteredKey, region: (process.env.METERED_TURN_REGION || '').trim() } : null,
+    static: turnUrls.length ? { urls: [...new Set(turnUrls)], username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL } : null,
   };
 }
 
