@@ -9,6 +9,7 @@ import { ah, HttpError } from '../middleware/error.js';
 import { uuid } from '../utils/helpers.js';
 import * as presence from '../services/presence.js';
 import * as calls from '../services/calls.js';
+import { getIceServers } from '../services/ice.js';
 
 const router = Router();
 
@@ -30,7 +31,12 @@ router.get('/availability', (req, res) => {
   res.json({ agentsOnline: presence.onlineCount(), agentsAvailable: presence.availableCount() });
 });
 
-router.get('/ice', (req, res) => res.json({ iceServers: config.iceServers }));
+// Contains short-lived TURN credentials: never cache in the browser or a CDN
+const iceLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 60, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests. Please wait a few minutes and try again.' } });
+router.get('/ice', iceLimiter, ah(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ iceServers: await getIceServers() });
+}));
 
 const leadSchema = z.object({
   name: z.string().trim().min(2, 'Please enter your name').max(60).regex(/^[\p{L}\p{M} .'-]+$/u, 'Name can only contain letters'),

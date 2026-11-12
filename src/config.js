@@ -25,15 +25,25 @@ function corsEntry(origin) {
   return new RegExp(`^${pattern}$`, 'i');
 }
 
-function buildIceServers() {
-  const servers = [];
-  const stun = list(process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302');
-  if (stun.length) servers.push({ urls: stun });
-  const turn = list(process.env.TURN_URLS);
-  if (turn.length) {
-    servers.push({ urls: turn, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL });
-  }
-  return servers;
+/** STUN/TURN settings; src/services/ice.js turns these into the list browsers use. */
+function buildTurn() {
+  const keyId = (process.env.CLOUDFLARE_TURN_KEY_ID || '').trim();
+  const apiToken = (process.env.CLOUDFLARE_TURN_API_TOKEN || '').trim();
+  if (!!keyId !== !!apiToken) throw new Error('Set both CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN (or neither)');
+  const turnUrls = list(process.env.TURN_URLS);
+  return {
+    stunUrls: list(process.env.STUN_URLS ?? 'stun:stun.l.google.com:19302'),
+    cloudflare: keyId ? { keyId, apiToken } : null,
+    static: turnUrls.length ? { urls: turnUrls, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL } : null,
+  };
+}
+
+/** Self-ping so the Render free plan doesn't sleep. RENDER_EXTERNAL_URL is set by Render automatically. */
+function buildKeepAlive() {
+  const minutes = Number(process.env.KEEP_ALIVE_MINUTES || 10);
+  if (!(minutes >= 1 && minutes < 15)) throw new Error('KEEP_ALIVE_MINUTES must be between 1 and 14 (Render sleeps after 15 minutes)');
+  const url = process.env.KEEP_ALIVE === 'false' ? '' : (process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL || '').trim();
+  return { url, minutes };
 }
 
 /**
@@ -64,7 +74,8 @@ export const config = {
     email: process.env.SEED_ADMIN_EMAIL || '',
     password: process.env.SEED_ADMIN_PASSWORD || '',
   },
-  iceServers: buildIceServers(),
+  turn: buildTurn(),
+  keepAlive: buildKeepAlive(),
 };
 
 if (config.isProd && (config.jwtSecret.length < 32 || config.jwtSecret.startsWith('change-me'))) {

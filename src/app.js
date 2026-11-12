@@ -8,6 +8,7 @@ import authRoutes from './routes/auth.js';
 import publicRoutes from './routes/public.js';
 import adminRoutes from './routes/admin.js';
 import agentRoutes from './routes/agent.js';
+import { turnProvider } from './services/ice.js';
 import { notFound, errorHandler, ah } from './middleware/error.js';
 
 export function createApp() {
@@ -23,7 +24,7 @@ export function createApp() {
   // Lightweight by default (Render health checks shouldn't keep Neon awake); ?db=1 also checks the database.
   app.get('/api/health', ah(async (req, res) => {
     if (req.query.db) await query('SELECT 1');
-    res.json({ ok: true, time: new Date().toISOString() });
+    res.json({ ok: true, time: new Date().toISOString(), turn: turnProvider() });
   }));
 
   app.use('/api/auth', authRoutes);

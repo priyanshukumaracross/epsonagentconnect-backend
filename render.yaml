@@ -38,10 +38,12 @@ services:
         value: "120"
       - key: STUN_URLS
         value: stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
-      # TURN relay for calls on mobile networks (recommended)
-      - key: TURN_URLS
+      # TURN relay, needed for calls on mobile data / between countries (see README).
+      # Recommended: Cloudflare Realtime TURN (1,000 GB/month free)
+      - key: CLOUDFLARE_TURN_KEY_ID
         sync: false
-      - key: TURN_USERNAME
+      - key: CLOUDFLARE_TURN_API_TOKEN
         sync: false
-      - key: TURN_CREDENTIAL
-        sync: false
+      # Keeps the free service from sleeping: pings its own RENDER_EXTERNAL_URL (set by Render)
+      - key: KEEP_ALIVE_MINUTES
+        value: "10"

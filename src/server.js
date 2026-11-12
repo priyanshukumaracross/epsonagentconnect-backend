@@ -5,6 +5,8 @@ import { initSocket } from './socket/index.js';
 import { pool } from './db/pool.js';
 import { ensureAdmin, runMigrations } from './db/setup.js';
 import { recoverStaleCalls } from './services/calls.js';
+import { getIceServers, turnProvider } from './services/ice.js';
+import { startKeepAlive } from './services/keepAlive.js';
 
 const app = createApp();
 const server = http.createServer(app);
@@ -43,6 +45,10 @@ async function start() {
 
   server.listen(config.port, () => {
     console.log(`✔ Epson Expert Connect API listening on port ${config.port}`);
+    startKeepAlive();
+    const turn = turnProvider();
+    if (turn === 'none') console.warn('! No TURN relay configured: calls on mobile data / between countries may connect without audio or video (see README).');
+    else getIceServers().then((list) => { if (list.some((x) => x.credential)) console.log(`✔ TURN relay ready (${turn})`); });
   });
 }
 
