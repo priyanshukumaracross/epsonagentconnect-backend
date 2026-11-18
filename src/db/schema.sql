@@ -33,8 +33,8 @@ CREATE TABLE IF NOT EXISTS leads (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,
   mobile      TEXT NOT NULL,
-  state       TEXT NOT NULL,
-  city        TEXT NOT NULL,
+  state       TEXT,             -- optional since Nov 2026: taken from the store when the form doesn't ask
+  city        TEXT,
   interests   TEXT[] NOT NULL DEFAULT '{}',
   store_id    UUID REFERENCES stores(id) ON DELETE SET NULL,
   product     TEXT,
@@ -78,3 +78,8 @@ CREATE INDEX IF NOT EXISTS idx_calls_status       ON calls (status);
 CREATE INDEX IF NOT EXISTS idx_calls_requested_at ON calls (requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_calls_agent        ON calls (agent_id);
 CREATE INDEX IF NOT EXISTS idx_calls_lead         ON calls (lead_id);
+
+-- ---- Upgrades for databases created by earlier versions (safe to re-run) ----
+-- The customer form no longer asks for state/city (client layout, Nov 2026)
+ALTER TABLE leads ALTER COLUMN state DROP NOT NULL;
+ALTER TABLE leads ALTER COLUMN city DROP NOT NULL;

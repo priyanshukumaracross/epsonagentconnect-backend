@@ -230,7 +230,7 @@ router.get('/leads/:id', ah(async (req, res) => {
   const { rows: history } = await query(`${CALL_SELECT} WHERE c.lead_id = ? ORDER BY c.requested_at DESC`, [id]);
   // other submissions from the same mobile number
   const { rows: related } = await query(
-    'SELECT id, name, city, created_at FROM leads WHERE mobile = ? AND id <> ? ORDER BY created_at DESC LIMIT 10',
+    'SELECT id, name, city, state, created_at FROM leads WHERE mobile = ? AND id <> ? ORDER BY created_at DESC LIMIT 10',
     [rows[0].mobile, id],
   );
   res.json({ lead: asBool(rows[0]), calls: history, related });

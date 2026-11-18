@@ -41,8 +41,9 @@ router.get('/ice', iceLimiter, ah(async (req, res) => {
 const leadSchema = z.object({
   name: z.string().trim().min(2, 'Please enter your name').max(60).regex(/^[\p{L}\p{M} .'-]+$/u, 'Name can only contain letters'),
   mobile: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile number'),
-  state: z.string().trim().min(2, 'Select your state').max(60),
-  city: z.string().trim().min(2, 'Select your city').max(60),
+  // Optional: the current form doesn't ask; the store's city/state is used instead
+  state: z.string().trim().max(60).nullish(),
+  city: z.string().trim().max(60).nullish(),
   interests: z.array(z.string().trim().max(40)).max(10).default([]),
   storeCode: z.string().trim().max(40).nullish(),
   product: z.string().trim().max(80).nullish(),
@@ -52,15 +53,18 @@ const leadSchema = z.object({
 router.post('/leads', writeLimiter, ah(async (req, res) => {
   const d = leadSchema.parse(req.body);
   let storeId = null;
+  let { state = null, city = null } = d;
   if (d.storeCode) {
-    const { rows } = await query('SELECT id FROM stores WHERE code = ?', [d.storeCode]);
+    const { rows } = await query('SELECT id, city, state FROM stores WHERE code = ?', [d.storeCode]);
     storeId = rows[0]?.id || null;
+    state ||= rows[0]?.state || null;
+    city ||= rows[0]?.city || null;
   }
   const id = crypto.randomUUID();
   await query(
     `INSERT INTO leads (id, name, mobile, state, city, interests, store_id, product, consent, user_agent)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, d.name, d.mobile, d.state, d.city, arr(d.interests), storeId, d.product || null, d.consent, (req.get('user-agent') || '').slice(0, 300)],
+    [id, d.name, d.mobile, state || null, city || null, arr(d.interests), storeId, d.product || null, d.consent, (req.get('user-agent') || '').slice(0, 300)],
   );
   const { rows } = await query('SELECT id, name, mobile, state, city, interests, product, created_at FROM leads WHERE id = ?', [id]);
   calls.notifyAdmins();
